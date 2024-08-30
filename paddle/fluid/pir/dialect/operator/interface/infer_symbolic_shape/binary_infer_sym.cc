@@ -671,12 +671,62 @@ bool FusedSoftmaxMaskOpInferSymbolicShape(
   return true;
 }
 
-// bool GridSampleOpInferSymbolicShape(pir::Operation *op,
-//                                     pir::InferSymbolicShapeContext
-//                                     *infer_context) {
-//   // pass
-//   return true;
-// }
+bool GridSampleOpInferSymbolicShape(
+    pir::Operation *op, pir::InferSymbolicShapeContext *infer_context) {
+  auto x_shape =
+      infer_context->GetShapeOrDataForValue(op->operand_source(0)).shape();
+  auto grid_shape =
+      infer_context->GetShapeOrDataForValue(op->operand_source(1)).shape();
+
+  PADDLE_ENFORCE_GE(x_shape.size(),
+                    4,
+                    common::errors::InvalidArgument(
+                        "Input(X) of GridSampleOp should be 4-D Tensor, but "
+                        "received X dimension size(%d)",
+                        x_shape.size()));
+  PADDLE_ENFORCE_LE(x_shape.size(),
+                    5,
+                    common::errors::InvalidArgument(
+                        "Input(X) of GridSampleOp should be 4-D Tensor, but "
+                        "received X dimension size(%d)",
+                        x_shape.size()));
+  PADDLE_ENFORCE_GE(grid_shape.size(),
+                    4,
+                    common::errors::InvalidArgument(
+                        "Input(Grid) of GridSampleOp should be 4-D Tensor, "
+                        "but received Grid dimension size(%d)",
+                        grid_shape.size()));
+  PADDLE_ENFORCE_LE(grid_shape.size(),
+                    5,
+                    common::errors::InvalidArgument(
+                        "Input(Grid) of GridSampleOp should be 4-D Tensor, "
+                        "but received Grid dimension size(%d)",
+                        grid_shape.size()));
+
+  if (grid_shape.size() == 4) {
+    infer_context->AddEqualCstr(grid_shape[3], symbol::DimExpr(2));
+  }
+  if (grid_shape.size() == 5) {
+    infer_context->AddEqualCstr(grid_shape[4], symbol::DimExpr(3));
+  }
+
+  infer_context->AddEqualCstr(grid_shape[0], x_shape[0]);
+
+  std::vector<symbol::DimExpr> out_shape;
+  if (grid_shape.size() == 4) {
+    out_shape = {x_shape[0], x_shape[1], grid_shape[1], grid_shape[2]};
+  } else {
+    out_shape = {
+        x_shape[0], x_shape[1], grid_shape[1], grid_shape[2], grid_shape[3]};
+  }
+
+  infer_context->SetShapeOrDataForValue(
+      op->result(0),
+      symbol::ShapeOrDataDimExprs{
+          symbol::TensorShapeOrDataDimExprs(out_shape)});
+
+  return true;
+}
 
 bool GatherOpInferSymbolicShape(pir::Operation *op,
                                 pir::InferSymbolicShapeContext *infer_context) {
@@ -839,7 +889,7 @@ bool HuberLossOpInferSymbolicShape(
   const std::vector<symbol::DimExpr> &label_dims = label.shape();
   PADDLE_ENFORCE_EQ(input_dims.size(),
                     label_dims.size(),
-                    phi::errors::InvalidArgument(
+                    common::errors::InvalidArgument(
                         "Input(input) rank and Input(label) rank should be "
                         "same, but received input rank(%d) != label rank(%d)",
                         input_dims.size(),
@@ -1174,12 +1224,46 @@ bool MatmulOpInferSymbolicShape(pir::Operation *op,
   return true;
 }
 
-// bool MatrixNmsOpInferSymbolicShape(pir::Operation *op,
-//                                    pir::InferSymbolicShapeContext
-//                                    *infer_context) {
-//   // pass
-//   return true;
-// }
+bool MatrixNmsOpInferSymbolicShape(
+    pir::Operation *op, pir::InferSymbolicShapeContext *infer_context) {
+  const auto &bboxes_shape_or_data =
+      infer_context->GetShapeOrDataForValue(op->operand_source(0));
+  const auto &scores_shape_or_data =
+      infer_context->GetShapeOrDataForValue(op->operand_source(1));
+  const std::vector<symbol::DimExpr> &bboxes_shape =
+      bboxes_shape_or_data.shape();
+  const std::vector<symbol::DimExpr> &scores_shape =
+      scores_shape_or_data.shape();
+
+  infer_context->AddEqualCstr(bboxes_shape[2], symbol::DimExpr(4));
+  infer_context->AddEqualCstr(bboxes_shape[1], scores_shape[2]);
+
+  symbol::DimExpr num_kept = infer_context->GetNextSymName();
+
+  std::vector<symbol::DimExpr> out_shape = {
+      num_kept, bboxes_shape[2] + symbol::DimExpr(2)};
+  std::vector<symbol::DimExpr> index_shape = {num_kept, symbol::DimExpr(1)};
+
+  infer_context->SetShapeOrDataForValue(
+      op->result(0),
+      symbol::ShapeOrDataDimExprs{
+          symbol::TensorShapeOrDataDimExprs(out_shape)});
+
+  infer_context->SetShapeOrDataForValue(
+      op->result(1),
+      symbol::ShapeOrDataDimExprs{
+          symbol::TensorShapeOrDataDimExprs(index_shape)});
+
+  if (op->result(2)) {
+    std::vector<symbol::DimExpr> roisnum_shape = {scores_shape[0]};
+    infer_context->SetShapeOrDataForValue(
+        op->result(2),
+        symbol::ShapeOrDataDimExprs{
+            symbol::TensorShapeOrDataDimExprs(roisnum_shape)});
+  }
+
+  return true;
+}
 
 bool MarginCrossEntropyOpInferSymbolicShape(
     pir::Operation *op, pir::InferSymbolicShapeContext *infer_context) {
